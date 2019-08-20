@@ -22,7 +22,7 @@
 
 <xwikidoc>
   <web>GoogleApps</web>
-  <name>Groovy</name>
+  <name>TestDocumentList</name>
   <language/>
   <defaultLanguage/>
   <translation>0</translation>
@@ -32,13 +32,29 @@
   <customClass/>
   <contentAuthor>xwiki:XWiki.Admin</contentAuthor>
   <version>1.1</version>
-  <title/>
+  <title>Document List</title>
   <defaultTemplate/>
   <validationScript/>
   <comment/>
   <minorEdit>false</minorEdit>
   <syntaxId>xwiki/2.0</syntaxId>
   <hidden>true</hidden>
-  <content>
-</content>
+  <attachment>
+    <filename>testcolors.xls</filename>
+    <filesize>7168</filesize>
+    <mimetype>application/vnd.ms-excel</mimetype>
+    <author>xwiki:XWiki.Admin</author>
+    <version>1.1</version>
+    <comment/>
+    <content/>
+  </attachment>
+  <content>{{velocity}}
+{{translation key='googleapps.testDocList.about'/}}
+
+#set($gagroovy = $services.GAScriptService)
+#set($doclist = $gagroovy.getDocumentList())
+#foreach($item in $doclist.items)
+* $item.title $item.id $item.selfLink
+#end
+{{/velocity}}</content>
 </xwikidoc>

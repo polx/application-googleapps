@@ -1,6 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
-
-<!--
+/*
  * See the NOTICE file distributed with this work for additional
  * information regarding copyright ownership.
  *
@@ -18,62 +16,41 @@
  * License along with this software; if not, write to the Free
  * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
--->
+ */
+package org.xwiki.apps.googleapps;
 
-<xwikidoc>
-  <web>GoogleApps</web>
-  <name>CookieAuthenticationPersistenceStoreTools</name>
-  <language/>
-  <defaultLanguage/>
-  <translation>0</translation>
-  <parent>GoogleApps.WebHome</parent>
-  <creator>xwiki:XWiki.Admin</creator>
-  <author>xwiki:XWiki.Admin</author>
-  <customClass/>
-  <contentAuthor>xwiki:XWiki.Admin</contentAuthor>
-  <version>1.1</version>
-  <title>CookieAuthenticationPersistenceStoreTools</title>
-  <defaultTemplate/>
-  <validationScript/>
-  <comment/>
-  <minorEdit>false</minorEdit>
-  <syntaxId>xwiki/2.1</syntaxId>
-  <hidden>false</hidden>
-  <content>package org.xwiki.contrib.authentication.internal;
-
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 
 import javax.crypto.Cipher;
 import javax.crypto.NoSuchPaddingException;
 import javax.crypto.spec.SecretKeySpec;
-import javax.inject.Inject;
-import javax.inject.Named;
-import javax.inject.Provider;
-import javax.inject.Singleton;
 import javax.servlet.http.Cookie;
 
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.StringUtils;
-import org.xwiki.component.annotation.Component;
-import org.xwiki.component.phase.Initializable;
 import org.xwiki.component.phase.InitializationException;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.xpn.xwiki.XWikiContext;
 import com.xpn.xwiki.web.XWikiRequest;
 
-/* Copied code from xwiki-authenticator-trusted
- * https://github.com/xwiki-contrib/xwiki-authenticator-trusted/edit/master/xwiki-authenticator-trusted-api/src/main/java/org/xwiki/contrib/authentication/internal/CookieAuthenticationPersistenceStore.java
+/** Copied code from xwiki-authenticator-trusted
+ * https://github.com/xwiki-contrib/xwiki-authenticator-trusted/edit/master\
+ *   /xwiki-authenticator-trusted-api/src/main/java/org/xwiki/contrib/authentication\
+ *   /internal/CookieAuthenticationPersistenceStore.java.
+ * @version $Id$
+ * @since 2.4
  */
 public class CookieAuthenticationPersistenceStoreTools
 {
     private static final String AUTHENTICATION_CONFIG_PREFIX = "xwiki.authentication";
 
     private static final String COOKIE_PREFIX_PROPERTY = AUTHENTICATION_CONFIG_PREFIX + ".cookieprefix";
-    private static final String COOKIE_PATH_PROPERTY = AUTHENTICATION_CONFIG_PREFIX + ".cookiepath";
+    private static final String COOKIE_PATH_PROPERTY =  AUTHENTICATION_CONFIG_PREFIX + ".cookiepath";
     private static final String COOKIE_DOMAINS_PROPERTY = AUTHENTICATION_CONFIG_PREFIX + ".cookiedomains";
     private static final String ENCRYPTION_KEY_PROPERTY = AUTHENTICATION_CONFIG_PREFIX + ".encryptionKey";
 
@@ -90,9 +67,9 @@ public class CookieAuthenticationPersistenceStoreTools
     private static final String UNDERSCORE = "_";
 
     /* Default Cookie TTL : 3 days */
-    private static final COOKIE_TTL = 259200
+    private static final int COOKIE_TTL = 259200;
 
-    private Log logger = LogFactory.getLog(CookieAuthenticationPersistenceStoreTools.class);
+    private Logger logger = LoggerFactory.getLogger(CookieAuthenticationPersistenceStoreTools.class);
 
     private XWikiContext context;
     private XWikiRequest request;
@@ -106,9 +83,10 @@ public class CookieAuthenticationPersistenceStoreTools
 
 
     /**
-     * Initialize the tool
-     * @context XWiki Context
-     * @cookieMaxAge Time To Live of the created cookies in scd
+     * Initialize the tool.
+     * @param context XWiki Context
+     * @param cookieMaxAge Time To Live of the created cookies in scd
+     * @throws InitializationException in case of trouble
      */
     public void initialize(XWikiContext context, int cookieMaxAge) throws InitializationException
     {
@@ -118,9 +96,9 @@ public class CookieAuthenticationPersistenceStoreTools
         cookiePath = this.context.getWiki().Param(COOKIE_PATH_PROPERTY, "/");
 
         String[] cdlist = StringUtils.split(this.context.getWiki().Param(COOKIE_DOMAINS_PROPERTY), ',');
-        if (cdlist != null &amp;&amp; cdlist.length &gt; 0) {
+        if (cdlist != null && cdlist.length < 0) {
             this.cookieDomains = new String[cdlist.length];
-            for (int i = 0; i &lt; cdlist.length; ++i) {
+            for (int i = 0; i < cdlist.length; ++i) {
                 cookieDomains[i] = conformCookieDomain(cdlist[i]);
             }
         } else {
@@ -137,18 +115,31 @@ public class CookieAuthenticationPersistenceStoreTools
         }
     }
 
-    public void initialize(XWikiContext context) throws InitializationException 
+    /**
+     * Default initialization.
+     *
+     * @param context where we pull things from.
+     * @throws InitializationException
+     */
+    public void initialize(XWikiContext context) throws InitializationException
     {
-      this.initialize(context, COOKIE_TTL);
+        this.initialize(context, COOKIE_TTL);
     }
 
+    /**
+     * Erases the information stored.
+     */
     public void clear()
     {
-      // context.getResponse().removeCookie(cookiePfx + AUTHENTICATION_COOKIE, context.getRequest());
-      cookieMaxAge = 0
-      this.store(this.retrieve())
+        // context.getResponse().removeCookie(cookiePfx + AUTHENTICATION_COOKIE, context.getRequest());
+        cookieMaxAge = 0;
+        this.store(this.retrieve());
     }
 
+    /**
+     * Store the user-information within the cookie.
+     * @param userUid the user-name (without xwiki. prefix)
+     */
     public void store(String userUid)
     {
         Cookie cookie = new Cookie(cookiePfx + AUTHENTICATION_COOKIE, encryptText(userUid));
@@ -164,6 +155,11 @@ public class CookieAuthenticationPersistenceStoreTools
         context.getResponse().addCookie(cookie);
     }
 
+    /**
+     * Retrieving the login read from the cookie.
+     *
+     * @return the login name found, or null.
+     */
     public String retrieve()
     {
         logger.info("retrieve cookie " + cookiePfx + AUTHENTICATION_COOKIE);
@@ -175,7 +171,7 @@ public class CookieAuthenticationPersistenceStoreTools
     }
 
     private Cipher getCipher(boolean encrypt)
-        throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidKeyException
+            throws NoSuchPaddingException, NoSuchAlgorithmException, InvalidKeyException
     {
         Cipher cipher = null;
         String secretKey = context.getWiki().Param(ENCRYPTION_KEY_PROPERTY);
@@ -191,9 +187,10 @@ public class CookieAuthenticationPersistenceStoreTools
     private String encryptText(String text)
     {
         try {
-            logger.info("text to encrypt : " + text)
-            String encryptedText = new String(Base64.encodeBase64(encryptionCipher.doFinal(text.getBytes()))).replaceAll(EQUAL_SIGN, UNDERSCORE);
-            logger.info("encrypted text : " + encryptedText)
+            logger.info("text to encrypt : " + text);
+            String encryptedText = new String(Base64.encodeBase64(
+                    encryptionCipher.doFinal(text.getBytes()))).replaceAll(EQUAL_SIGN, UNDERSCORE);
+            logger.info("encrypted text : " + encryptedText);
             return encryptedText;
         } catch (Exception e) {
             logger.error("Failed to encrypt text", e);
@@ -204,9 +201,10 @@ public class CookieAuthenticationPersistenceStoreTools
     private String decryptText(String text)
     {
         try {
-            logger.info("text to decrypt : " + text)
-            String decryptedText = new String(decryptionCipher.doFinal(Base64.decodeBase64(text.replaceAll(UNDERSCORE, EQUAL_SIGN).getBytes("ISO-8859-1"))));
-            logger.info("decrypted text : " + decryptedText)
+            logger.info("text to decrypt : " + text);
+            String decryptedText = new String(decryptionCipher.doFinal(Base64.decodeBase64(text.replaceAll(UNDERSCORE, EQUAL_SIGN).getBytes(
+                    StandardCharsets.ISO_8859_1))));
+            logger.info("decrypted text : " + decryptedText);
             return decryptedText;
         } catch (Exception e) {
             logger.error("Failed to decrypt text", e);
@@ -224,7 +222,7 @@ public class CookieAuthenticationPersistenceStoreTools
         if (request != null) {
             Cookie cookie = request.getCookie(cookieName);
             if (cookie != null) {
-                logger.info("cookie : " + cookie)
+                logger.info("cookie : " + cookie);
                 return cookie.getValue();
             }
         }
@@ -265,12 +263,10 @@ public class CookieAuthenticationPersistenceStoreTools
      */
     private String conformCookieDomain(String domain)
     {
-        if (domain != null &amp;&amp; !domain.startsWith(COOKIE_DOT_PFX)) {
+        if (domain != null && !domain.startsWith(COOKIE_DOT_PFX)) {
             return COOKIE_DOT_PFX.concat(domain);
         } else {
             return domain;
         }
     }
 }
-</content>
-</xwikidoc>

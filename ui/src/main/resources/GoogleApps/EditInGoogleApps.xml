@@ -22,7 +22,7 @@
 
 <xwikidoc>
   <web>GoogleApps</web>
-  <name>TestDocumentList</name>
+  <name>EditInGoogleApps</name>
   <language/>
   <defaultLanguage/>
   <translation>0</translation>
@@ -32,30 +32,38 @@
   <customClass/>
   <contentAuthor>xwiki:XWiki.Admin</contentAuthor>
   <version>1.1</version>
-  <title>Document List</title>
+  <title>$services.localization.render("googleapps.edit.title")</title>
   <defaultTemplate/>
   <validationScript/>
   <comment/>
   <minorEdit>false</minorEdit>
-  <syntaxId>xwiki/2.0</syntaxId>
+  <syntaxId>xwiki/2.1</syntaxId>
   <hidden>true</hidden>
-  <attachment>
-    <filename>testcolors.xls</filename>
-    <filesize>7168</filesize>
-    <mimetype>application/vnd.ms-excel</mimetype>
-    <author>xwiki:XWiki.Admin</author>
-    <version>1.1</version>
-    <comment/>
-    <content/>
-  </attachment>
   <content>{{velocity}}
-{{translation key='googleapps.testDocList.about'/}}
+#set($gagroovy = $services.GAScriptService)
+#if($gagroovy.active &amp;&amp; $gagroovy.useDrive)
+  #set($gdoc = $gagroovy.getGoogleDocument($request.page, $request.name))
+  #if($request.confirm)
+  {{translation key='googleapps.editInGA.uploading'/}}
+   #set($gdoc = $gagroovy.saveAttachmentToGoogle($request.page, $request.name))
+  #end
 
-#set($gagroovy = $xwiki.parseGroovyFromPage("GoogleApps.Groovy"))
-#set($ok = $gagroovy.init($xwiki, $context, $doc))
-#set($doclist = $gagroovy.getDocumentList())
-#foreach($item in $doclist.items)
-* $item.title $item.id $item.selfLink
+  #if($gdoc)
+  {{translation key='googleapps.editInGA.isInGDrive'/}}
+
+  (% class="buttonwrapper" %)
+  {{html clean=false}}&lt;a href="${gdoc.editLink}" target="_blank"&gt;$services.localization.render("googleapps.edit.editingoogle.button")&lt;/a&gt;{{/html}}
+
+  $services.localization.render("googleapps.edit.desc")
+
+  (% class="buttonwrapper" %)[[$services.localization.render("googleapps.edit.retrieve.button")&gt;&gt;RetrieveFromGoogleApps||queryString="page=${escapetool.url($request.page)}&amp;name=${escapetool.url($request.name)}&amp;url=${escapetool.url($gdoc.exportLink)}&amp;id=${gdoc.id}"]]
+  #else
+  {{translation key='googleapps.editInGA.notYetInGDrive'/}}
+
+  (% class="buttonwrapper" %)[[$services.localization.render("googleapps.edit.confirm")&gt;&gt;||queryString="page=${escapetool.url($request.page)}&amp;name=${escapetool.url($request.name)}&amp;confirm=1"]]
+  #end
+#else
+  {{translation key='googleapps.error.driveDisabled'/}}
 #end
 {{/velocity}}</content>
 </xwikidoc>

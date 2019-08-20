@@ -56,8 +56,7 @@
 {{/html}}
 
 #if($request.query)
-#set($gagroovy = $xwiki.parseGroovyFromPage("GoogleApps.Groovy"))
-#set($ok = $gagroovy.init($xwiki, $context, $doc))
+#set($gagroovy = $services.GAScriptService)
 #set($squery = "'" + $request.query + "'")
 #set($result = $gagroovy.importFromGoogleApps("fullText contains ${squery}", 10))
 #foreach($entry in $result.items)

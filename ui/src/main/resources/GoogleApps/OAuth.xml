@@ -22,7 +22,7 @@
 
 <xwikidoc>
   <web>GoogleApps</web>
-  <name>AuthService</name>
+  <name>OAuth</name>
   <language/>
   <defaultLanguage/>
   <translation>0</translation>
@@ -32,12 +32,28 @@
   <customClass/>
   <contentAuthor>xwiki:XWiki.Admin</contentAuthor>
   <version>1.1</version>
-  <title/>
+  <title>Google Apps Authentication</title>
   <defaultTemplate/>
   <validationScript/>
   <comment/>
   <minorEdit>false</minorEdit>
-  <syntaxId>xwiki/2.1</syntaxId>
+  <syntaxId>xwiki/2.0</syntaxId>
   <hidden>true</hidden>
-  <content/>
+  <content>
+$services.localization.render("googleapps.login.oauth.message")
+
+{{velocity}}
+#set($gagroovy = $services.GAScriptService)
+#set($creds = $gagroovy.authorize())
+#if($creds)
+#if($request.state)
+$services.localization.render("googleapps.login.oauth.success")
+#else
+$services.localization.render("googleapps.login.oauth.successwithredirect")
+#end
+#else
+$services.localization.render("googleapps.login.oauth.notauthenticated")
+#end
+
+{{/velocity}}</content>
 </xwikidoc>
