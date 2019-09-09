@@ -33,6 +33,7 @@ import java.security.Principal;
 
 import javax.inject.Inject;
 import javax.inject.Named;
+import javax.inject.Provider;
 import javax.inject.Singleton;
 import javax.servlet.http.HttpSession;
 import javax.validation.constraints.NotNull;
@@ -56,19 +57,20 @@ public class GoogleAppsAuthService extends XWikiAuthServiceImpl
 {
 
     GoogleAppsAuthService(GoogleAppsScriptService father) {
+        Logger logger = loggerProvider!=null ? loggerProvider.get() : null;
         this.scriptService = father;
+        if(logger!=null) logger.info("GoogleApps authentificator - constructed (" + father + ")." );
     }
 
     @NotNull
     private GoogleAppsScriptService scriptService;
 
     @Inject
-    private Logger logger;
-
-    private boolean hasLogger() { return logger!=null; }
+    private Provider<Logger> loggerProvider;
 
     public XWikiUser checkAuth(XWikiContext context) throws XWikiException {
         try {
+            Logger logger = loggerProvider!=null ? loggerProvider.get() : null;
             if(logger!=null) logger.info("GoogleApps authentificator - checkAuth" );
             if(isLogoutRequest(context)) {
                 if(logger!=null) logger.info("caught a logout request" );
@@ -107,17 +109,13 @@ public class GoogleAppsAuthService extends XWikiAuthServiceImpl
      * @throws XWikiException a wrapped exception
      */
     public void showLogin(XWikiContext context) throws XWikiException {
+        Logger logger = loggerProvider!=null ? loggerProvider.get() : null;
         logger.info("GoogleApps authentificator - showLogin" );
         if(!scriptService.isActive(context)) return;
         boolean redirected = false;
         try {
             String url = context.getWiki().getURL("GoogleApps.Login", "view", context);
-            BaseObject configObj = scriptService.getConfigDoc(context);
-            int usecookies = configObj.getIntValue("useCookies");
-            int skipLoginPage = configObj.getIntValue("skipLoginPage");
-            logger.info("get cookie configuration : useCookies = " + usecookies);
-            logger.info("get cookie configuration : skipLoginPage = " + skipLoginPage);
-            if (usecookies == 1 && skipLoginPage == 1) {
+            if (scriptService.useCookies && scriptService.skipLoginPage) {
                 logger.info("skip the login page ");
                 XWikiRequest request = context.getRequest();
                 CookieAuthenticationPersistenceStoreTools cookieTools = new CookieAuthenticationPersistenceStoreTools();
@@ -160,38 +158,37 @@ public class GoogleAppsAuthService extends XWikiAuthServiceImpl
 
     public Principal authenticate(String username, String password, XWikiContext context) throws XWikiException {
         try {
+            Logger logger = loggerProvider!=null ? loggerProvider.get() : null;
             if(logger!=null) logger.info("GoogleApps authentificator - authenticate" );
-            else System.err.println("Would be authenticating!");
+            else System.err.println("GoogleApps authentificator - authenticate without logger (" + scriptService + ") !");
+
+            // case of a too early call or deactivated... can only count on local users
+            if(scriptService==null || !scriptService.isActive(context)) {
+                return super.authenticate(username, password, context);
+            }
 
             HttpSession session = context.getRequest().getSession();
             String xwikiUser = (String) session.getAttribute("googleappslogin");
-            logger.info("xwikiUser from session : " + xwikiUser);
+            if(logger!=null) logger.info("xwikiUser from session : " + xwikiUser);
             // get configuration for authentification with cookies
 
-            BaseObject configObj = scriptService.getConfigDoc(context);
-            int usecookies = configObj.getIntValue("useCookies");
-            int  authWithCookies = configObj.getIntValue("authWithCookies");
-            int cookieTTL = configObj.getIntValue("cookiesTTL");
-            logger.info("get cookie configuration : useCookies = " + usecookies);
-            logger.info("get cookie configuration : authWithCookies = " + authWithCookies);
-            logger.info("get cookie configuration : cookieTTL = " + cookieTTL);
             // authenticate user from cookie value
-            if (xwikiUser == null && usecookies == 1 && authWithCookies == 1) {
-                logger.info("Authenticate with cookie");
+            if (xwikiUser == null && scriptService.useCookies && scriptService.authWithCookies) {
+                if(logger!=null) logger.info("Authenticate with cookie");
                 CookieAuthenticationPersistenceStoreTools cookieTools = new CookieAuthenticationPersistenceStoreTools();
                 cookieTools.initialize(context);
                 String userCookie = cookieTools.retrieve();
-                logger.info("retrieved user from cookie : " + userCookie);
+                if(logger!=null) logger.info("retrieved user from cookie : " + userCookie);
                 String userFullName = "xwiki:" + userCookie;
                 XWikiDocument userDoc = context.getWiki().getDocument(userFullName, context);
                 xwikiUser = (userCookie == null || userDoc.isNew()) ? null : userFullName ;
-                logger.info("xwikiUser from cookie : " + xwikiUser);
+                if(logger!=null) logger.info("xwikiUser from cookie : " + xwikiUser);
             }
             if (xwikiUser!=null) {
-                logger.info("Authenticating user " + xwikiUser);
+                if(logger!=null) logger.info("Authenticating user " + xwikiUser);
                 return new SimplePrincipal(xwikiUser);
             } else {
-                logger.info("use default authenticate method for user : " + username);
+                if(logger!=null) logger.info("use default authenticate method for user : " + username);
                 return super.authenticate(username, password, context);
             }
         } catch (InitializationException e) {

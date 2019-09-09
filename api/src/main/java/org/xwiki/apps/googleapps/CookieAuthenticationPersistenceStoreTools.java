@@ -36,6 +36,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.xpn.xwiki.XWikiContext;
+import com.xpn.xwiki.XWikiException;
 import com.xpn.xwiki.web.XWikiRequest;
 
 /** Copied code from xwiki-authenticator-trusted
@@ -77,7 +78,7 @@ public class CookieAuthenticationPersistenceStoreTools
     private String cookiePfx;
     private String cookiePath;
     private String[] cookieDomains;
-    private int cookieMaxAge;
+    private long cookieMaxAge;
     private Cipher encryptionCipher;
     private Cipher decryptionCipher;
 
@@ -86,9 +87,9 @@ public class CookieAuthenticationPersistenceStoreTools
      * Initialize the tool.
      * @param context XWiki Context
      * @param cookieMaxAge Time To Live of the created cookies in scd
-     * @throws InitializationException in case of trouble
+     * @throws XWikiException in case of trouble
      */
-    public void initialize(XWikiContext context, int cookieMaxAge) throws InitializationException
+    public void initialize(XWikiContext context, long cookieMaxAge) throws XWikiException
     {
         this.context = context;
         this.request = context.getRequest();
@@ -111,7 +112,7 @@ public class CookieAuthenticationPersistenceStoreTools
             encryptionCipher = getCipher(true);
             decryptionCipher = getCipher(false);
         } catch (Exception e) {
-            throw new InitializationException("Unable to initialize ciphers", e);
+            throw new XWikiException("Unable to initialize ciphers", e);
         }
     }
 
@@ -119,9 +120,9 @@ public class CookieAuthenticationPersistenceStoreTools
      * Default initialization.
      *
      * @param context where we pull things from.
-     * @throws InitializationException
+     * @throws XWikiException
      */
-    public void initialize(XWikiContext context) throws InitializationException
+    public void initialize(XWikiContext context) throws XWikiException
     {
         this.initialize(context, COOKIE_TTL);
     }
@@ -143,7 +144,7 @@ public class CookieAuthenticationPersistenceStoreTools
     public void store(String userUid)
     {
         Cookie cookie = new Cookie(cookiePfx + AUTHENTICATION_COOKIE, encryptText(userUid));
-        cookie.setMaxAge(cookieMaxAge);
+        cookie.setMaxAge((int) cookieMaxAge);
         cookie.setPath(cookiePath);
         String cookieDomain = getCookieDomain();
         if (cookieDomain != null) {
