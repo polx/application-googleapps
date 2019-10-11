@@ -30,7 +30,6 @@ import javax.servlet.http.Cookie;
 
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.StringUtils;
-import org.xwiki.component.phase.InitializationException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -120,7 +119,7 @@ public class CookieAuthenticationPersistenceStoreTools
      * Default initialization.
      *
      * @param context where we pull things from.
-     * @throws XWikiException
+     * @throws XWikiException in case of a trouble at starting.
      */
     public void initialize(XWikiContext context) throws XWikiException
     {
@@ -203,7 +202,8 @@ public class CookieAuthenticationPersistenceStoreTools
     {
         try {
             logger.info("text to decrypt : " + text);
-            String decryptedText = new String(decryptionCipher.doFinal(Base64.decodeBase64(text.replaceAll(UNDERSCORE, EQUAL_SIGN).getBytes(
+            String decryptedText = new String(decryptionCipher.doFinal(
+                    Base64.decodeBase64(text.replaceAll(UNDERSCORE, EQUAL_SIGN).getBytes(
                     StandardCharsets.ISO_8859_1))));
             logger.info("decrypted text : " + decryptedText);
             return decryptedText;

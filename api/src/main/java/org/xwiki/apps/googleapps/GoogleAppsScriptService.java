@@ -24,14 +24,20 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeRequestUrl;
 import com.google.api.client.googleapis.auth.oauth2.GoogleTokenResponse;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.http.InputStreamContent;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.jackson2.JacksonFactory;
 import com.google.api.client.util.store.FileDataStoreFactory;
 import com.google.api.services.drive.Drive;
+import com.google.api.services.drive.DriveScopes;
+import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
 import com.google.api.services.plus.Plus;
+import com.google.api.services.plus.PlusScopes;
 import com.google.api.services.plus.model.Person;
 import com.google.gdata.client.docs.DocsService;
+import com.google.gdata.data.MediaContent;
+import com.google.gdata.data.media.MediaSource;
 import com.xpn.xwiki.XWiki;
 import com.xpn.xwiki.XWikiContext;
 import com.xpn.xwiki.XWikiException;
@@ -50,12 +56,12 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.xwiki.bridge.event.ApplicationReadyEvent;
 import org.xwiki.bridge.event.DocumentUpdatedEvent;
-import org.xwiki.component.manager.ComponentLifecycleException;
 import org.xwiki.component.phase.Disposable;
 import org.xwiki.component.phase.Initializable;
 import org.xwiki.component.phase.InitializationException;
 import org.xwiki.environment.Environment;
 import org.xwiki.model.reference.DocumentReference;
+import org.xwiki.model.reference.DocumentReferenceResolver;
 import org.xwiki.model.reference.ObjectReference;
 import org.xwiki.observation.EventListener;
 import org.xwiki.observation.event.Event;
@@ -73,12 +79,12 @@ import org.xwiki.query.QueryException;
 import org.xwiki.query.QueryManager;
 import org.xwiki.script.service.ScriptService;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
-import java.security.GeneralSecurityException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
@@ -97,10 +103,6 @@ import java.util.jar.Manifest;
 public class GoogleAppsScriptService implements ScriptService, EventListener, Initializable, Disposable
 {
 
-
-
-
-
     //  -----------------------------  Lifecycle ---------------------------
 
     @Inject
@@ -113,7 +115,14 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     private Environment environment;
 
     @Inject
+    @Named("current")
+    private DocumentReferenceResolver<String> documentResolver;
+
+    @Inject
     private Logger log;
+
+
+
 
     @Override
     public String getName()
@@ -132,8 +141,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
         XWiki xwiki = getXWiki();
 
         // We do not verify with the context if the plugin is active and if the license is active
-        // this will be done by the GoogleAppsAuthService later on, when it is called within a request
-
+        // this will be done by the GoogleAppsAuthService and UI pages later on, when it is called within a request
         if (xwiki != null) {
             setAuthService(xwiki);
         }
@@ -157,125 +165,158 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     public void onEvent(Event event, Object source, Object data)
     {
         log.info("Event triggered: " + event);
-        if(event instanceof ApplicationReadyEvent) {
+        if (event instanceof ApplicationReadyEvent) {
             try {
                 initialize();
             } catch (InitializationException e) {
                 e.printStackTrace();
             }
-        } else if(event instanceof DocumentUpdatedEvent) {
+        } else if (event instanceof DocumentUpdatedEvent) {
             configActiveFlag = null;
         }
     }
 
 
     // internals
-    private GoogleAppsAuthService authService = null;
+    private GoogleAppsAuthService authService;
 
-    private DocumentReference configDocRef = null, oauthReference = null;
-    private ObjectReference configObjRef = null;
+    private DocumentReference configDocRef;
+    private ObjectReference configObjRef;
 
     /** A map of hash to full redirects. */
-    private Map<String,String> storedStates = new HashMap<String,String>();
+    private Map<String, String> storedStates = new HashMap<>();
 
-    private FileDataStoreFactory dsFactory = null;
+    private FileDataStoreFactory dsFactory;
 
-    private JacksonFactory jacksonFactory = null;
+    private JacksonFactory jacksonFactory;
 
-    private NetHttpTransport httpTransport = null;
+    private NetHttpTransport httpTransport;
 
     private CloseableHttpClient httpclient = HttpClients.createDefault();
 
 
     private BaseObject getConfigDoc(XWikiContext context) throws XWikiException
     {
-        if(configDocRef==null) {
+        if (configDocRef  ==  null) {
             configDocRef = new DocumentReference(context.getWikiId(),
-                    "GoogleApps","GoogleAppsConfig");
+                    "GoogleApps", "GoogleAppsConfig");
             configObjRef = new ObjectReference("GoogleApps.GoogleAppsConfigClass", configDocRef);
         }
         XWikiDocument doc = context.getWiki().getDocument(configObjRef, context);
         BaseObject result = doc.getXObject(configObjRef, false, context);
-        if(result==null) log.warn("Can't access Config document.");
+        if (result  ==  null) {
+            log.warn("Can't access Config document.");
+        }
         return result;
     }
 
-    Boolean configActiveFlag = null;
-    Boolean useCookies = null,
-            skipLoginPage = null,
-            authWithCookies = null;
-    String configAppName = null,
-            configClientId = null,
-            configClientSecret = null,
-            configDomain = null;
-    List<String> configScopes = null;
-    Boolean configScopeUseAvatar = null, configScopeUseDrive = null;
-    Long configCookiesTTL = null;
+    private Boolean configActiveFlag;
+    private Boolean useCookies;
+    private Boolean skipLoginPage;
+    private Boolean authWithCookies;
+    private String configAppName;
+    private String configClientId;
+    private String configClientSecret;
+    private String configDomain;
 
+    private Boolean configScopeUseAvatar, configScopeUseDrive;
+    private Long configCookiesTTL;
 
+    /**
+     * @return if the application is licensed and activated
+     * @throws XWikiException in case a context cannot be read from thread.
+     */
+    public boolean isActive() throws XWikiException {
+        return isActive(xwikiContextProvider.get());
+    }
 
-    /** Indicates wether the application is active and licensed.
+    /** Evaluates wether the application is active and licensed by looking at the stored documents.
      * Within a request, this method should always be the first to be called so that the config-object
      * is read and other properties are cached if need be.
      *
-     * @param context The context (a page request). */
-    public boolean isActive(XWikiContext context) throws XWikiException
+     * @param context The context (a page request).
+     * @return True if documents were readable, and the is licensed and active; false otherwise. */
+    public boolean isActive(XWikiContext context)
     {
-        if(configActiveFlag !=null) return configActiveFlag.booleanValue();
-            if(log!=null) log.warn("Attempting to fetch Config doc");
+        if (configActiveFlag  ==  null) {
             readConfigDoc(context);
-            if(configActiveFlag !=null) {
-                return configActiveFlag;
-            } else
-                return false;
+        }
+        if (configActiveFlag  !=  null) {
+            return configActiveFlag;
+        }
+        return false;
+    }
+
+    boolean isUseCookies() {
+        return useCookies;
+    }
+
+    boolean isSkipLoginPage() {
+        return skipLoginPage;
+    }
+
+    boolean isAuthWithCookies() {
+        return authWithCookies;
     }
 
     private void readConfigDoc(XWikiContext context) {
 
         try {
-            if(log!=null) log.warn("Attempting to fetch Config doc");
+            log.warn("Attempting to fetch Config doc");
             BaseObject config = getConfigDoc(context);
-            if(config!=null) {
-                configActiveFlag   = new Boolean(0 != config.getIntValue("activate"));
-                useCookies         = new Boolean(0 != config.getIntValue("useCookies"));
-                skipLoginPage      = new Boolean(0 != config.getIntValue("skipLoginPage"));
-                authWithCookies    = new Boolean(0 != config.getIntValue("authWithCookies"));
-                configAppName      = config.getStringValue("appname");
-                configClientId     = config.getStringValue("clientid");
-                configClientSecret = config.getStringValue("secret");
-                configDomain       = config.getStringValue("domain");
-                if(configDomain!=null && configDomain.length()==0) configDomain = null;
-                configScopes       = Arrays.asList(config.getStringValue("scope").split("\\s"));
+            if (config != null) {
+                configActiveFlag   = 0 != config.getIntValue("activate");
+                useCookies         = 0 != config.getIntValue("useCookies");
+                skipLoginPage      = 0 != config.getIntValue("skipLoginPage");
+                authWithCookies    = 0 != config.getIntValue("authWithCookies");
+                configAppName      = config.getStringValue("appname").trim();
+                configClientId     = config.getStringValue("clientid").trim();
+                configClientSecret = config.getStringValue("secret").trim();
+                configDomain       = config.getStringValue("domain").trim();
+                if (configDomain.length() == 0) {
+                    configDomain = null;
+                }
+                List<String> configScopes = Arrays.asList(config.getStringValue("scope").split("\\s"));
                 configScopeUseAvatar = configScopes.contains("avatar");
                 configScopeUseDrive = configScopes.contains("drive");
-                configCookiesTTL = config.getLongValue  ("cookiesTTL");
+                configCookiesTTL = config.getLongValue("cookiesTTL");
             }
         } catch (XWikiException e) {
             e.printStackTrace();
-            if(log!=null) log.warn("can't fetch Config doc");
+            if (log != null) {
+                log.warn("can't fetch Config doc");
+            }
         }
     }
 
+    /**
+     * Reads the manifest to find when the JAR file was assembled by maven.
+     * @return the build date.
+     */
     public Date getBuildTime() {
         try {
             Class clazz = getClass();
-            String className = clazz.getSimpleName() + ".class";
+            String className = clazz.getSimpleName()
+                    + ".class";
             String classPath = clazz.getResource(className).toString();
-            String manifestPath = classPath.substring(0, classPath.lastIndexOf("!") + 1) +
-                    "/META-INF/MANIFEST.MF";
+            String manifestPath = classPath.substring(0, classPath.lastIndexOf("!") + 1)
+                    + "/META-INF/MANIFEST.MF";
             Manifest manifest = new Manifest(new URL(manifestPath).openStream());
             Attributes attr = manifest.getMainAttributes();
             return new Date(Long.parseLong(attr.getValue("Bnd-LastModified")));
         } catch (IOException e) {
-            log.warn("Can't read build time.", e);
-            throw new RuntimeException("Can't read build time.", e);
+            String msg = "Can't read build time.";
+            log.warn(msg, e);
+            throw new RuntimeException(msg, e);
         }
     }
 
 
     private void setAuthService(XWiki xwiki)
     {
-        if(authService==null) authService = new GoogleAppsAuthService(this);
+        if (authService == null) {
+            authService = new GoogleAppsAuthService(this, log);
+        }
         xwiki.setAuthService(authService);
     }
 
@@ -284,11 +325,9 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     /**
      * Note that this dispose() will get called when this Extension is uninstalled which is the use case we want to
      * serve. The fact that it'll also be called when XWiki stops is a side effect that is ok.
-     *
-     * @throws ComponentLifecycleException if things go wrong.
      */
     @Override
-    public void dispose() throws ComponentLifecycleException
+    public void dispose()
     {
         XWiki xwiki = getXWiki();
         // XWiki can be null in the case when XWiki has been started and not accessed (no first request done and thus
@@ -299,6 +338,8 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
         }
     }
 
+
+    // -----------------------------------------------------------------------------------------
     private XWiki getXWiki()
     {
         XWiki result = null;
@@ -311,40 +352,65 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
         return result;
     }
 
+    // ------------------------- public API ---------------------------------------------
+
+    /**
+     *
+     * @return if the app is configured to use the Google Drive integration (default: yes).
+     */
+    public boolean isUseDrive() {
+        return configScopeUseDrive;
+    }
+
+
+
 
     // ----------------------------- Google Apps Tool (mostly request specific) -----------------------------------
 
     private  String getOAuthUrl() throws XWikiException {
         XWikiContext context = xwikiContextProvider.get();
-        DocumentReference oauthReference = new DocumentReference(context.getWikiId(), "GoogleApps","OAuth");
+        DocumentReference oauthReference = new DocumentReference(context.getWikiId(),
+                "GoogleApps", "OAuth");
         return getXWiki().getDocument(oauthReference, context).getExternalURL("view", context);
     }
 
     private DocumentReference getXWikiUserClassRef() {
-        XWikiContext context = xwikiContextProvider.get();
-        DocumentReference docRef = new DocumentReference("XWiki", "XWiki","XWikiUsers");
-        return docRef;
+        return new DocumentReference("xwiki", "XWiki", "XWikiUsers");
     }
 
     private String getCurrentXWikiUserName() {
-        return xwikiContextProvider.get().getUserReference().getName();
+        DocumentReference userDoc = xwikiContextProvider.get().getUserReference();
+        String uName = userDoc == null ? "XWikiGuest" : userDoc.getName();
+        if ("XWikiGuest".equals(uName)) {
+            uName = uName + "-" + xwikiContextProvider.get().getRequest().getSession().hashCode();
+        }
+        return uName;
     }
 
-    private DocumentReference createUserReference(String userName) {
-        if(userName.startsWith("XWiki.")) userName = userName.substring("XWiki.".length());
-        return new DocumentReference("xwiki", "XWiki", userName);
+    DocumentReference createUserReference(String userName) {
+        String uN = userName;
+        if (uN.startsWith("xwiki:")) {
+            uN = uN.substring("xwiki.".length());
+        }
+        if (uN.startsWith("XWiki.")) {
+            uN = uN.substring("XWiki.".length());
+        }
+        return new DocumentReference("xwiki", "XWiki", uN);
     }
 
-    private DocumentReference gauthClassRef = null;
+    private DocumentReference gauthClassRef;
     private DocumentReference getGoogleAuthClassReference() {
-        if(gauthClassRef == null)
-            gauthClassRef = new DocumentReference("XWiki", "GoogleApps", "GoogleAppsAuthClass");
+        if (gauthClassRef == null) {
+            gauthClassRef = new DocumentReference("xwiki", "GoogleApps", "GoogleAppsAuthClass");
+        }
         return gauthClassRef;
     }
 
-    public GATool createTool() {
-        GATool gaTool = new GATool(this);
-        return gaTool;
+    private DocumentReference getSyncDocClassReference() {
+        if (gauthClassRef == null) {
+            gauthClassRef = new DocumentReference("xwiki", "GoogleApps", "SynchronizedDocumentClass");
+        }
+        return gauthClassRef;
     }
 
     /**
@@ -355,16 +421,28 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     private GoogleAuthorizationCodeFlow getFlow() throws IOException
     {
         try {
-            if(dsFactory==null)
-                dsFactory = new FileDataStoreFactory(new File(environment.getPermanentDirectory(), "googleapps"));
-            GoogleAuthorizationCodeFlow flow =
-                    new GoogleAuthorizationCodeFlow.Builder(
+            if (dsFactory == null) {
+                dsFactory =
+                        new FileDataStoreFactory(new java.io.File(environment.getPermanentDirectory(), "googleapps"));
+            }
+
+            // create scopes from config
+            List<String> gScopes = new ArrayList<>();
+            gScopes.add(PlusScopes.USERINFO_EMAIL);
+            gScopes.add(PlusScopes.USERINFO_PROFILE);
+            gScopes.add(PlusScopes.PLUS_ME);
+            if (configScopeUseDrive != null && configScopeUseDrive) {
+                gScopes.add(DriveScopes.DRIVE);
+            }
+
+            // create flow
+            return new GoogleAuthorizationCodeFlow.Builder(
                             httpTransport,
-                            jacksonFactory, configClientId, configClientSecret, configScopes)
+                            jacksonFactory, configClientId, configClientSecret, gScopes)
                             .setDataStoreFactory(dsFactory)
                             .setAccessType("online").setApprovalPrompt("auto")
+                            .setClientId(configClientId)
                             .build();
-            return flow;
         } catch (Exception e) {
             e.printStackTrace();
             throw new IOException("Issue at building Google Authorization Flow.", e);
@@ -379,7 +457,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      *     credentials.
      * @return OAuth 2.0 credentials.
      */
-    Credential exchangeCode(String authorizationCode) {
+    private Credential exchangeCode(String authorizationCode) {
         try {
             GoogleAuthorizationCodeFlow flow = getFlow();
             GoogleTokenResponse tokenResponse = flow
@@ -396,30 +474,25 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     }
 
     private Map<String, Credential> getCredentialStore() {
-        final String KEY = "GoogleAppsCredentialStore";
+        final String key = "GoogleAppsCredentialStore";
         HttpSession session = xwikiContextProvider.get().getRequest().getSession(true);
-        Map<String,Credential> store = (Map<String,Credential>) (session.getAttribute(KEY));
-        if(store == null) {
-            store = new HashMap<String,Credential>();
-            session.setAttribute(KEY, store);
+        Map<String, Credential> store = (Map<String, Credential>) (session.getAttribute(key));
+        if (store == null) {
+            store = new HashMap<>();
+            session.setAttribute(key, store);
         }
         return store;
     }
 
     private void storeCredentials(String userId, Credential credentials) throws XWikiException  {
         try {
-            if (userId.contains("XWiki.XWikiGuest")) {
-                userId = userId + "-" + xwikiContextProvider.get().getRequest().getSession().hashCode();
-            }
-            else {
+            if (userId.contains("XWikiGuest")) {
                 if (useCookies) {
                     // create a cookie
                     CookieAuthenticationPersistenceStoreTools cookieTools =
                             new CookieAuthenticationPersistenceStoreTools();
                     cookieTools.initialize(xwikiContextProvider.get(), configCookiesTTL);
-
                     cookieTools.store(userId);
-                    log.info("Store cookie for user " + userId);
                 }
             }
             log.info("Storing credentials for user " + userId);
@@ -431,8 +504,8 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     }
 
     private Credential getStoredCredentials(String userId) {
-        if (userId.contains("XWiki.XWikiGuest")) {
-            userId = userId + "-" + xwikiContextProvider.get().getRequest().getSession().hashCode();
+        if (userId == null) {
+            return null;
         }
         log.debug("Getting credentials for user " + userId);
         return getCredentialStore().get(userId);
@@ -456,19 +529,15 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      *     token.
      * @throws IOException Unable to load client_secret.json.
      */
-    private Credential retrieveCredentials(String authorizationCode) throws XWikiException, IOException {
-        return retrieveCredentials(authorizationCode, true);
-    }
-
     private Credential retrieveCredentials(String authorizationCode, boolean redirect)
             throws XWikiException, IOException {
-        Credential credentials = null;
+        Credential credentials;
         String user = getCurrentXWikiUserName();
 
-        if (authorizationCode!=null && authorizationCode!="") {
-            log.debug("Trying to get credentials from authorization code: ${authorizationCode}");
-            credentials = (authorizationCode==null) ? null : exchangeCode(authorizationCode);
-            if (credentials!=null) {
+        if (authorizationCode != null && authorizationCode.length() > 0) {
+            log.debug("Trying to get credentials from authorization code: " + authorizationCode);
+            credentials = exchangeCode(authorizationCode);
+            if (credentials != null) {
                 String rtoken = credentials.getRefreshToken();
                 if (rtoken != null) {
                     log.debug("Refresh token has been created: " + rtoken);
@@ -482,15 +551,13 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
             }
         }
 
-        if (credentials==null) {
-            log.debug("No credentials found. Checking stored credentials for user " + user);
-            credentials = getStoredCredentials(user);
-            if (credentials != null) {
-                log.debug("Retrieved stored credentials");
-                return credentials;
-            }
-            log.debug("Could not find stored credentials");
+        log.debug("No credentials found. Checking stored credentials for user " + user);
+        credentials = getStoredCredentials(user);
+        if (credentials != null) {
+            log.debug("Retrieved stored credentials");
+            return credentials;
         }
+        log.debug("Could not find stored credentials");
 
         log.debug("No credentials retrieved.");
         // No refresh token has been retrieved.
@@ -498,17 +565,19 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
             log.debug("Redirecting to authorization URL.");
             xwikiContextProvider.get().getResponse().sendRedirect(getAuthorizationURL());
         }
-        return credentials;
+        return null;
     }
 
     private String getAuthorizationURL() throws XWikiException, IOException {
         String state = "";
-        XWikiRequest request = xwikiContextProvider.get().getRequest();
-        if (!xwikiContextProvider.get().getDoc().getFullName().equals("GoogleApps.OAuth")) {
-            String finalRedirect = request.getRequestURL().toString();
-            String qs = request.getQueryString();
-            if (qs!=null & qs.length()>0)
-                finalRedirect += "?" + qs;
+        XWikiContext context = xwikiContextProvider.get();
+        XWikiRequest request = context.getRequest();
+        DocumentReference ref = context.getDoc().getDocumentReference();
+        if (!("OAuth".equals(ref.getName()) && "GoogleApps".equals(ref.getLastSpaceReference().getName()))) {
+
+            String finalRedirect = new URL(
+                    new URL(getXWiki().getExternalURL("GoogleApps.Login", "view", context)),
+                            context.getDoc().getURL("view", request.getQueryString(), context)).toExternalForm();
             state = Integer.toHexString(finalRedirect.hashCode());
             storedStates.put(state, finalRedirect);
         }
@@ -523,244 +592,274 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
                     new CookieAuthenticationPersistenceStoreTools();
             cookieTools.initialize(xwikiContextProvider.get(), configCookiesTTL);
             String userId = cookieTools.retrieve();
-            XWikiDocument userDoc = getXWiki().getDocument(createUserReference(userId), xwikiContextProvider.get());
-            String userEmail = null;
-            BaseObject userObj = userDoc.getXObject(getXWikiUserClassRef(), false, xwikiContextProvider.get());
-            // userclass "XWiki.XWikiUsers"
+            if (userId != null) {
+                XWikiDocument userDoc = getXWiki().getDocument(createUserReference(userId), xwikiContextProvider.get());
+                String userEmail = null;
+                BaseObject userObj = userDoc.getXObject(getXWikiUserClassRef(), false, xwikiContextProvider.get());
+                // userclass "XWiki.XWikiUsers"
 
-            if (userObj!=null) {
-                userEmail = userDoc.getStringValue("email");
+                if (userObj != null) {
+                    userEmail = userDoc.getStringValue("email");
+                }
+                if (userEmail != null) {
+                    urlBuilder = urlBuilder.set("login_hint", userEmail);
+                }
             }
-            if(userEmail!=null)
-                urlBuilder = urlBuilder.set("login_hint", userEmail);
         }
         String authurl = urlBuilder.build();
         log.debug("google authentication url : " + authurl);
         return authurl;
     }
 
-    private Credential authorize() throws XWikiException, IOException {
+    /** Inspects the stored information to see if an authorization or a redirect needs to be pronounced.
+     *
+     * @return found credential
+     * @throws XWikiException if the interaction with xwiki failed
+     * @throws IOException if a communication problem to Google services occured
+     */
+    public Credential authorize() throws XWikiException, IOException {
         return authorize(true);
     }
 
-    private Credential authorize(boolean redirect) throws XWikiException, IOException {
-        log.debug("In authorize");
-        GoogleAuthorizationCodeFlow flow = getFlow();
+    /** Inspects the stored information to see if an authorization or a redirect needs to be pronounced.
+     *
+     * @param redirect If a redirect can be done
+     * @return found credential
+     * @throws XWikiException if the interaction with xwiki failed
+     * @throws IOException if a communication problem to Google services occured
+     */
+    public Credential authorize(boolean redirect) throws XWikiException, IOException {
+        log.info("In authorize");
+        // useless? GoogleAuthorizationCodeFlow flow = getFlow();
         XWikiRequest request = xwikiContextProvider.get().getRequest();
         String state = request.getParameter("state");
         XWikiResponse response = xwikiContextProvider.get().getResponse();
         Credential creds = retrieveCredentials(request.getParameter("code"), redirect);
-        log.debug("Got credentials: " + creds);
-        if (state!=null && state.length()>0) {
+        log.info("Got credentials: " + creds);
+        if (state != null && state.length() > 0) {
             String url = storedStates.get(state);
-            if (url!=null) {
-                log.debug("Redirecting to final destination after authorization: " + url);
-                response.sendRedirect(url);
+            if (url != null) {
+                log.info("Redirecting to final destination after authorization: " + url);
+                response.sendRedirect(new URL(new URL(request.getRequestURL().toString()), url).toExternalForm());
             }
         }
         return creds;
     }
 
-    /**
-     * Build and return an authorized Google Plus client service.
-     * @return an authorized Drive client service
-     * @throws IOException
-     * @throws XWikiException
-     */
-    private Plus getPlusService() throws XWikiException, IOException {
-        Credential credential = authorize();
-        return new Plus.Builder(
-                httpTransport, jacksonFactory, credential)
-                .setApplicationName(configAppName)
-                .build();
-    }
 
     /**
      *
-     * @return -1 if failed, 0 if successful
-     * @throws XWikiException
-     * @throws IOException
+     * @return "failed login" if failed, "no user" (can be attempted to Google-OAuth),
+     *          or "ok" if successful
      */
-    private int updateUser() throws XWikiException,  IOException {
-        String xwikiUser = null;
-        Credential credential = authorize();
-        Plus plus = getPlusService();
-        Person user = plus.people().get("me").execute();
-        XWikiContext context = xwikiContextProvider.get();
-        log.debug("user: " + user);
-        // GOOGLEAPPS: User: [displayName:..., emails:[[type:account, value:...]], etag:"...", id:...., image:[isDefault:false, url:https://...], kind:plus#person, language:en, name:[familyName:..., givenName:...]]
-        if (user==null) {
-            return -1;
-        } else if (configDomain!=null && !configDomain.equals(user.getDomain())) {
-            String userId = getCurrentXWikiUserName() + "-" + context.getRequest().getSession().hashCode();
-            getCredentialStore().remove(userId);
-            log.debug("Wrong domain: Removed credentials for userid " + userId);
-            return -1;
-        } else {
-            String id = user.getId();
-            String email = "";
-            String currentWiki = context.getWikiId();
-            try {
-                // Force main wiki database to create the user as global
-                context.setMainXWiki("xwiki");
-                email = (user.getEmails() != null && user.getEmails().size() > 0) ? user.getEmails().get(0).getValue() :
-                        "";
-                List<Object[]> wikiUserList = queryManager.createQuery(
-                        "from doc.object(GoogleApps.GoogleAppsAuthClass) as auth where auth.id=:id",
-                        Query.XWQL).bindValue("id", id).execute();
-                if ((wikiUserList == null) || (wikiUserList.size() == 0))
-                    wikiUserList = queryManager.createQuery(
-                            "from doc.object(XWiki.XWikiUsers) as user where user.email=:email", Query.XWQL)
-                            .bindValue("email", email).execute();
-
-                if ((wikiUserList == null) || (wikiUserList.size() == 0)) {
-                    // user not found.. need to create new user
-                    xwikiUser = email.substring(0, email.indexOf("@"));
-                    // make sure user is unique
-                    xwikiUser = getXWiki().getUniquePageName("XWiki", xwikiUser, context);
-                    // create user
-                    DocumentReference userDirRef = new DocumentReference(context.getWikiId(), "Main", "UserDirectory");
-                    String randomPassword = RandomStringUtils.randomAlphanumeric(8);
-                    Map<String, String> userAttributes = new HashMap<String, String>();
-
-                    if (user.getName() != null) {
-                        userAttributes.put("first_name", user.getName().getGivenName());
-                        userAttributes.put("last_name", user.getName().getFamilyName());
+    public String updateUser() {
+        try {
+            if (!isActive()) {
+                return "failed login";
+            }
+            log.info("Updating user...");
+            XWikiContext context = xwikiContextProvider.get();
+            String xwikiUser;
+            Credential credential = authorize();
+            Person user = null;
+            if(credential != null) {
+                Plus plus = new Plus.Builder(
+                        httpTransport, jacksonFactory, credential)
+                        .setApplicationName(configAppName)
+                        .build();
+                user = plus.people().get("me").execute();
+                // GOOGLEAPPS: User: [displayName:..., emails:[[type:account, value:...]], etag:"...",
+                // id:...., image:[isDefault:false, url:https://...], kind:plus#person, language:en,
+                // name:[familyName:..., givenName:...]]
+            }
+            log.info("user: " + user);
+            context.getRequest().setAttribute("googleUser", user);
+            if (user == null) {
+                return "no user";
+            } else if (configDomain != null && !configDomain.equals(user.getDomain())) {
+                String userId = getCurrentXWikiUserName();
+                getCredentialStore().remove(userId);
+                log.debug("Wrong domain: Removed credentials for userid " + userId);
+                return "failed login";
+            } else {
+                String id = user.getId();
+                String email;
+                String currentWiki = context.getWikiId();
+                try {
+                    // Force main wiki database to create the user as global
+                    context.setMainXWiki("xwiki");
+                    email = (user.getEmails() != null && user.getEmails().size() > 0)
+                            ? user.getEmails().get(0).getValue() : "";
+                    List<Object> wikiUserList = queryManager.createQuery(
+                            "from doc.object(GoogleApps.GoogleAppsAuthClass) as auth where auth.id=:id",
+                            Query.XWQL).bindValue("id", id).execute();
+                    if ((wikiUserList == null) || (wikiUserList.size() == 0)) {
+                        wikiUserList = queryManager.createQuery(
+                                "from doc.object(XWiki.XWikiUsers) as user where user.email=:email", Query.XWQL)
+                                .bindValue("email", email).execute();
                     }
-                    userAttributes.put("email", email);
-                    userAttributes.put("password", randomPassword);
-                    int isCreated = getXWiki().createUser(xwikiUser, userAttributes,
-                            userDirRef, null, null, "edit", context);
-                    // Add google apps id to the user
-                    if (isCreated == 1) {
-                        log.debug("Creating user " + xwikiUser);
-                        XWikiDocument userDoc = getXWiki()
-                                .getDocument(createUserReference(xwikiUser), context);
-                        BaseObject userObj = userDoc.getXObject(getXWikiUserClassRef());
 
-                        // TODO: is this not redundant when having used createUser (map) ?
+                    if ((wikiUserList == null) || (wikiUserList.size() == 0)) {
+                        // user not found.. need to create new user
+                        xwikiUser = email.substring(0, email.indexOf("@"));
+                        // make sure user is unique
+                        xwikiUser = getXWiki().getUniquePageName("XWiki", xwikiUser, context);
+                        // create user
+                        DocumentReference userDirRef = new DocumentReference(
+                                context.getWikiId(), "Main", "UserDirectory");
+                        String randomPassword = RandomStringUtils.randomAlphanumeric(8);
+                        Map<String, String> userAttributes = new HashMap<>();
+
                         if (user.getName() != null) {
-                            userObj.set("first_name", user.getName().getGivenName(), context);
-                            userObj.set("last_name", user.getName().getFamilyName(), context);
+                            userAttributes.put("first_name", user.getName().getGivenName());
+                            userAttributes.put("last_name", user.getName().getFamilyName());
                         }
-                        if (configScopeUseAvatar && user.getImage() != null && user.getImage().getUrl() != null) {
-                            log.debug("Adding avatar " + user.getImage().getUrl());
-                            URL u = new URL(user.getImage().getUrl());
-                            InputStream b = u.openStream();
-                            String fileName = u.getFile().substring(u.getFile().lastIndexOf('/') + 1);
-                            userDoc.addAttachment(fileName, u.openStream(), context);
-                            userObj.set("avatar", fileName, context);
-                            b.close();
-                        }
+                        userAttributes.put("email", email);
+                        userAttributes.put("password", randomPassword);
+                        int isCreated = getXWiki().createUser(xwikiUser, userAttributes,
+                                userDirRef, null, null, "edit", context);
+                        // Add google apps id to the user
+                        if (isCreated == 1) {
+                            log.debug("Creating user " + xwikiUser);
+                            XWikiDocument userDoc = getXWiki()
+                                    .getDocument(createUserReference(xwikiUser), context);
+                            BaseObject userObj = userDoc.getXObject(getXWikiUserClassRef());
 
-                        int place = userDoc.createXObject(getGoogleAuthClassReference(), context);
-                        BaseObject gAppsAuthClass = userDoc.getXObject(getGoogleAuthClassReference());
-                        gAppsAuthClass.set("id", id, context);
-                        getXWiki().saveDocument(userDoc, "Google Apps login user creation", false, context);
-                    } else {
-                        log.debug("User creation failed");
-                        return -1;
-                    }
-                } else {
-                    // user found.. we should update it if needed
-                    xwikiUser = (String) (wikiUserList.get(0)[0]);
-                    log.debug("Found user " + xwikiUser);
-                    boolean changed = false;
-                    XWikiDocument userDoc = getXWiki().getDocument(createUserReference(xwikiUser), context);
-                    BaseObject userObj = userDoc.getXObject(getXWikiUserClassRef());
-                    if (userObj == null) {
-                        log.debug("User found is not a user");
-                        return -1;
-                    } else {
-                        if (! userObj.getStringValue("email").equals(email)) {
-                            userObj.set("email", email, context);
-                            changed = true;
-                        }
-                        if (!userObj.getStringValue("first_name").equals(user.getName().getGivenName())) {
-                            userObj.set("first_name", user.getName().getGivenName(), context);
-                            changed = true;
-                        }
-                        if (!userObj.getStringValue("last_name").equals(user.getName().getFamilyName())) {
-                            userObj.set("last_name", user.getName().getFamilyName(), context);
-                            changed = true;
-                        }
-                        if (configScopeUseAvatar && user.getImage()!=null  && user.getImage().getUrl()!=null) {
-                            String imageUrl = user.getImage().getUrl();
-                            log.debug("Pulling avatar " + imageUrl);
-                            HttpGet httpget = new HttpGet(imageUrl);
-                            // TODO: add an if-modified-since
-                            CloseableHttpResponse response = httpclient.execute(httpget);
-                            HttpEntity entity = response.getEntity();
-                            if(entity!=null) {
-                                ByteArrayOutputStream bOut = new ByteArrayOutputStream((int) entity.getContentLength());
-                                IOUtils.copy(entity.getContent(), bOut);
-                                byte[] bytesFromGoogle = bOut.toByteArray();
-
-                                XWikiAttachment attachment =
-                                        userObj.getStringValue("avatar") == null ? null :
-                                                userDoc.getAttachment(userObj.getStringValue("avatar"));
-                                boolean fileChanged = attachment == null || attachment.getFilesize() != bytesFromGoogle.length;
-                                if (!fileChanged) {
-                                    byte[] b = attachment.getContent(context);
-                                    for (int i = 0; i < b.length; i++)
-                                        if (b[i] != bytesFromGoogle[i]) {
-                                            fileChanged = true;
-                                            break;
-                                        }
-                                }
-                                if (fileChanged) {
-                                    String fileName = new URL(imageUrl).getFile().substring(imageUrl.lastIndexOf('/') + 1);
-                                    log.debug("Avatar changed " + fileName);
-                                    userObj.set("avatar", fileName, context);
-                                    userDoc.addAttachment(fileName, bytesFromGoogle, context);
-                                    changed = true;
-                                }
+                            // TODO: is this not redundant when having used createUser (map) ?
+                            if (user.getName() != null) {
+                                userObj.set("first_name", user.getName().getGivenName(), context);
+                                userObj.set("last_name", user.getName().getFamilyName(), context);
+                            }
+                            userObj.set("active", 1, context);
+                            if (configScopeUseAvatar && user.getImage() != null && user.getImage().getUrl() != null) {
+                                log.debug("Adding avatar " + user.getImage().getUrl());
+                                URL u = new URL(user.getImage().getUrl());
+                                InputStream b = u.openStream();
+                                String fileName = u.getFile().substring(u.getFile().lastIndexOf('/') + 1);
+                                userDoc.addAttachment(fileName, u.openStream(), context);
+                                userObj.set("avatar", fileName, context);
+                                b.close();
                             }
 
-                        }
-
-                        BaseObject googleAppsAuth = userDoc.getXObject(getGoogleAuthClassReference());
-                        if (googleAppsAuth == null) {
                             userDoc.createXObject(getGoogleAuthClassReference(), context);
-                            googleAppsAuth = userDoc.getXObject(getGoogleAuthClassReference());
-                            changed = true;
-                        }
-
-                        if (!googleAppsAuth.getStringValue("id").equals(id)) {
-                            googleAppsAuth.set("id", id, context);
-                            changed = true;
-                        }
-
-                        if (changed) {
-                            log.info("User changed.");
-                            getXWiki().saveDocument(userDoc, "Google Apps login user updated.", context);
+                            BaseObject gAppsAuthClass = userDoc.getXObject(getGoogleAuthClassReference());
+                            gAppsAuthClass.set("id", id, context);
+                            getXWiki().saveDocument(userDoc, "Google Apps login user creation", false, context);
                         } else {
-                            log.info("User unchanged.");
+                            log.debug("User creation failed");
+                            return "failed login";
+                        }
+                    } else {
+                        // user found.. we should update it if needed
+                        xwikiUser = (String) (wikiUserList.get(0));
+                        log.debug("Found user " + xwikiUser);
+                        boolean changed = false;
+                        XWikiDocument userDoc = getXWiki().getDocument(createUserReference(xwikiUser), context);
+                        BaseObject userObj = userDoc.getXObject(getXWikiUserClassRef());
+                        if (userObj == null) {
+                            log.debug("User found is not a user");
+                            return "failed login";
+                        } else {
+                            if (!userObj.getStringValue("email").equals(email)) {
+                                userObj.set("email", email, context);
+                                changed = true;
+                            }
+                            if (!userObj.getStringValue("first_name").equals(user.getName().getGivenName())) {
+                                userObj.set("first_name", user.getName().getGivenName(), context);
+                                changed = true;
+                            }
+                            if (!userObj.getStringValue("last_name").equals(user.getName().getFamilyName())) {
+                                userObj.set("last_name", user.getName().getFamilyName(), context);
+                                changed = true;
+                            }
+                            if (configScopeUseAvatar && user.getImage() != null  && user.getImage().getUrl() != null) {
+                                String imageUrl = user.getImage().getUrl();
+                                log.debug("Pulling avatar " + imageUrl);
+                                HttpGet httpget = new HttpGet(imageUrl);
+                                // TODO: add an if-modified-since
+                                CloseableHttpResponse response = httpclient.execute(httpget);
+                                HttpEntity entity = response.getEntity();
+                                if (entity != null) {
+                                    ByteArrayOutputStream bOut =
+                                            new ByteArrayOutputStream((int) entity.getContentLength());
+                                    IOUtils.copy(entity.getContent(), bOut);
+                                    byte[] bytesFromGoogle = bOut.toByteArray();
+
+                                    XWikiAttachment attachment =
+                                            userObj.getStringValue("avatar") == null ? null
+                                                    : userDoc.getAttachment(userObj.getStringValue("avatar"));
+                                    boolean fileChanged = attachment == null
+                                            || attachment.getFilesize() != bytesFromGoogle.length;
+                                    if (!fileChanged) {
+                                        byte[] b = attachment.getContent(context);
+                                        for (int i = 0; i < b.length; i++) {
+                                            if (b[i] != bytesFromGoogle[i]) {
+                                                fileChanged = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (fileChanged) {
+                                        String fileName = imageUrl.substring(imageUrl.lastIndexOf('/') + 1);
+                                        log.debug("Avatar changed " + fileName);
+                                        userObj.set("avatar", fileName, context);
+                                        userDoc.addAttachment(fileName, bytesFromGoogle, context);
+                                        changed = true;
+                                    }
+                                }
+
+                            }
+
+                            BaseObject googleAppsAuth = userDoc.getXObject(getGoogleAuthClassReference());
+                            if (googleAppsAuth == null) {
+                                userDoc.createXObject(getGoogleAuthClassReference(), context);
+                                googleAppsAuth = userDoc.getXObject(getGoogleAuthClassReference());
+                                changed = true;
+                            }
+
+                            if (!googleAppsAuth.getStringValue("id").equals(id)) {
+                                googleAppsAuth.set("id", id, context);
+                                changed = true;
+                            }
+
+                            if (changed) {
+                                log.info("User changed.");
+                                getXWiki().saveDocument(userDoc, "Google Apps login user updated.", context);
+                            } else {
+                                log.info("User unchanged.");
+                            }
                         }
                     }
+                } catch (QueryException qe) {
+                    log.warn("Can't query for users.", qe);
+                    throw new XWikiException("Can't query for users.", qe);
+                } finally {
+                    // Restore database
+                    context.setMainXWiki(currentWiki);
                 }
-            } catch (QueryException qe) {
-                log.warn("Can't query for users.", qe);
-                throw new XWikiException("Can't query for users.", qe);
-            } finally {
-                // Restore database
-                context.setMainXWiki(currentWiki);
+
+                // we need to restore the credentials as the user will now be logged-in
+                storeCredentials(xwikiUser, credential);
+
+                // store the validated xwiki user for the authentication module
+                context.getRequest().getSession().setAttribute("googleappslogin", xwikiUser);
+
+                return "ok";
             }
-
-            // we need to restore the credentials as the user will now be logged-in
-            storeCredentials(xwikiUser, credential);
-
-            // store the validated xwiki user for the authentication module
-            context.getRequest().getSession().setAttribute("googleappslogin", "xwiki:" + xwikiUser);
-
-            return 0;
+        } catch (Exception e) {
+            log.warn("Problem at updateUser", e);
+            return "no user";
         }
     }
+
+
+
+
 
     /**
      * Build and return an authorized Drive client service.
      * @return an authorized Drive client service
-     * @throws IOException
+     * @throws IOException if a communication error occurs
      */
     private Drive getDriveService() throws XWikiException, IOException {
         Credential credential = authorize();
@@ -773,7 +872,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     /**
      * Build and return an authorized Drive client service.
      * @return an authorized Drive client service
-     * @throws IOException
+     * @throws IOException if a communication error occurred
      */
     private DocsService getDocsService() throws XWikiException, IOException {
         Credential credential = authorize();
@@ -786,23 +885,343 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     private FileList getDocumentList() throws XWikiException, IOException {
         Drive drive = getDriveService();
         FileList result = drive.files().list().setMaxResults(10).execute();
+        // TODO: filter the list for inapplicable types
         return result;
     }
 
     // TODO: this is the same function as listDocuments! One of them must be wrong
+    /** Fetches a list of Google Drive document matching a substring query in the filename.
+     *
+     * @param query the expected filename substring
+     * @param nbResults max number of results
+     * @return The list of files at Google Drive.
+     * @throws XWikiException if an XWiki issue occurs
+     * @throws IOException if an error interacting with Google services occurred
+     */
     public FileList importFromGoogleApps(String query, int nbResults) throws XWikiException, IOException {
         Drive drive = getDriveService();
-        Drive.Files.List req = drive.files().list().setQ(query).setFields("items(id,mimeType,title,exportLinks,selfLink,version,alternateLink)").setMaxResults(nbResults);
+        Drive.Files.List req = drive.files().list()
+                .setQ(query)
+                .setFields("items(id,mimeType,title,exportLinks,selfLink,version,alternateLink)")
+                .setMaxResults(nbResults);
         FileList result = req.execute();
+        // TODO: filter the list for inapplicable types
         return result;
     }
 
+    /** Fetches a list of Google Drive document matching a substring query in the filename.
+     *
+     * @param query the expected filename substring
+     * @param nbResults max number of results
+     * @return The list of files at Google Drive.
+     * @throws XWikiException if an XWiki issue occurs
+     * @throws IOException if an error interacting with Google services occurred
+     */
     public FileList listDocuments(String query, int nbResults) throws XWikiException, IOException {
         Drive drive = getDriveService();
         Drive.Files.List req = drive.files().list().setQ(query).setMaxResults(nbResults);
         FileList result = req.execute();
+        // TODO: filter the list for inapplicable types
         return result;
     }
 
+    /**
+     * Fetches the google-drive document's representation and stores it as attachment.
+     * @param page attach to this page
+     * @param name attach using this file name
+     * @param id store object attached to this attachment using this id (for later sync)
+     * @param url fetch from this URL
+     * @return true if successful
+     * @throws XWikiException if an issue occurred in XWiki
+     * @throws IOException if an issue occurred in the communication with teh Google services
+     */
+    public boolean retrieveFileFromGoogle(String page, String name, String id, String url)
+            throws XWikiException, IOException  {
+        return retrieveFileFromGoogle(getDocsService(), getDriveService(), page, name, id, url);
+    }
+
+    private boolean retrieveFileFromGoogle(DocsService docsService, Drive driveService,
+            String page, String name, String id, String url) throws XWikiException {
+        log.info("Retrieving " + name + " to page " + page + ": " + id + url);
+
+        XWikiDocument adoc = getXWiki().getDocument(documentResolver.resolve(page), xwikiContextProvider.get());
+        try {
+            byte[] data = downloadFile(docsService, url);
+            saveFileToXWiki(driveService, adoc, id, name, new ByteArrayInputStream(data), true);
+            return true;
+        } catch (Exception e) {
+            log.info(e.getMessage(), e);
+            throw new XWikiException("Trouble at retrieving from Google.", e);
+        }
+    }
+
+
+    private byte[] downloadFile(DocsService docsService, String exportUrl) throws XWikiException {
+        try {
+            MediaContent mc = new MediaContent();
+            mc.setUri(exportUrl);
+            MediaSource ms = docsService.getMedia(mc);
+
+            InputStream inStream = null;
+            ByteArrayOutputStream outStream = new ByteArrayOutputStream();
+
+            try {
+                inStream = ms.getInputStream();
+
+                int c;
+                while ((c = inStream.read()) != -1) {
+                    outStream.write(c);
+                }
+            } finally {
+                if (inStream != null) {
+                    inStream.close();
+                }
+                outStream.flush();
+                outStream.close();
+            }
+            return outStream.toByteArray();
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new XWikiException("trouble at downloading document", e);
+        }
+    }
+
+    private void saveFileToXWiki(Drive driveService, XWikiDocument adoc,
+            String id, String name, InputStream data, boolean redirect) throws XWikiException, IOException  {
+        XWikiContext context = xwikiContextProvider.get();
+        XWikiAttachment attachment = adoc.addAttachment(name, data, context);
+
+        // ready to save now
+        adoc.saveAttachmentContent(attachment, context);
+
+        String user = driveService.about().get().execute().getUser().getEmailAddress();
+        File docData = driveService.files().get(id).execute();
+        String embedLink = docData.getEmbedLink();
+        if (embedLink == null) {
+            embedLink = docData.getAlternateLink();
+        }
+
+        getXWiki().saveDocument(adoc, "Updated Attachment From Google Apps", context);
+
+        BaseObject object = adoc.getXObject(getSyncDocClassReference(), "fileName", name, false);
+        if (object == null) {
+            object = adoc.newXObject(getGoogleAuthClassReference(), context);
+        }
+        object.set("id", id, context);
+        object.set("fileName", name, context);
+        if (context.getRequest().getParameter("url") != null) {
+            object.set("exportLink", context.getRequest().getParameter("url"), context);
+        }
+        object.set("version", docData.getVersion().toString(), context);
+        object.set("editLink", docData.getAlternateLink(), context);
+        object.set("embedLink", embedLink, context);
+        if (object.getStringValue("user") == null || object.getStringValue("user").length() == 0) {
+            object.set("user", user, context);
+        }
+        getXWiki().saveDocument(adoc, "Updated Google Apps Document metadata", context);
+        log.info("Document " + name + " has been saved to XWiki");
+
+        if (redirect) {
+            String rurl = adoc.getURL("view", "#Attachments", context);
+            context.getResponse().sendRedirect(rurl);
+        }
+    }
+
+    /**
+     * Extracts metadata about the Google Drive document corresponding to the named attachment.
+     *
+     * @param pageName The XWiki page where the attachment is
+     * @param fileName The filename of the attachment
+     * @return information about the corresponding Google Drive document
+     * @throws XWikiException if something happened at XWiki side
+     */
+    public GoogleDocMetadata getGoogleDocument(String pageName, String fileName) throws XWikiException {
+        XWikiDocument adoc = getXWiki().getDocument(documentResolver.resolve(pageName), xwikiContextProvider.get());
+        BaseObject object = adoc.getXObject(getSyncDocClassReference(), "fileName", fileName, false);
+        if (object == null) {
+            return null;
+        } else {
+            GoogleDocMetadata gdm = new GoogleDocMetadata();
+            gdm.id = object.getStringValue("id");
+            gdm.editLink = object.getStringValue("editLink");
+            gdm.exportLink = object.getStringValue("exportLink");
+            return gdm;
+        }
+    }
+
+    /**
+     * Simple record for metadata about a google doc.
+     */
+    public static class GoogleDocMetadata
+    {
+        /**
+         * Google's internal id to find the document again.
+         */
+        public String id;
+
+        /**
+         * URL to direct the user to for editing.
+         */
+        public String editLink;
+
+        /**
+         * URL to pull from in order to fetch the document.
+         */
+        public String exportLink;
+    }
+
+    /**
+     * Reads the extension and document name.
+     * @param docName the raw docName
+     * @param elink the link where to read the extension name
+     * @return an array with extension and simplified document name
+     */
+    public String[] getExportLink(String docName, String elink) {
+        int index = elink.indexOf("exportFormat=") + 13;
+        String extension = elink.substring(index);
+        log.info("Found extension: " + extension);
+        String newDocName = docName
+                .replaceAll("\\.(doc|docx|odt|xls|xlsx|ods|pptx|svg|png|jpeg|pdf|)$", "");
+        newDocName += "." + extension;
+        log.info("Found extension: " + extension);
+        log.info("Found new DocName: " + newDocName);
+        return new String[] {extension, newDocName};
+    }
+
+    /**
+     * Maps the available "file-types" to available filename extensions.
+     * @param mimeType a google-document-type
+     * @param docName the name of the document
+     * @return a map with docName and availableTypes as keys
+     */
+    public Map<String, Object> getFileDisplayInfo(String mimeType, String docName) {
+        String newDocName;
+        String[] theAvailableTypes;
+        if (mimeType.endsWith("document")) {
+            newDocName = docName.replaceAll("\\.doc$", "")
+                    .replaceAll("\\.docx$", "").replaceAll("\\.odt$", "");
+            theAvailableTypes = new String[] { "odt", "doc", "pdf" };
+        } else if (mimeType.endsWith("spreadsheet")) {
+            newDocName = docName.replaceAll("\\.xls$", "")
+                    .replaceAll("\\.xlsx$", "").replaceAll("\\.ods$", "");
+            theAvailableTypes = new String[] {"ods", "xls", "xlsx", "pdf" };
+        } else if (mimeType.endsWith("presentation")) {
+            newDocName = docName.replaceAll("\\.ppt$", "")
+                    .replaceAll("\\.pptx$", "").replaceAll("\\.odp$", "");
+            theAvailableTypes = new String[] {"pptx", "pdf", "svg", "png", "jpeg" };
+        } else if (mimeType.endsWith("pdf")) {
+            newDocName = docName.replaceAll("\\.pdf$", "")
+                    .replaceAll("\\.pdf$", "").replaceAll("\\.pdf$", "");
+            theAvailableTypes = new String[] {"pdf" };
+        } else if (mimeType.endsWith("drawing")) {
+            newDocName = docName.replaceAll("\\.svg$", "");
+            theAvailableTypes = new String[] {"svg", "png", "jpeg", "pdf" };
+        } else if (mimeType.endsWith("folder")) {
+            newDocName = docName;
+            theAvailableTypes = new String[] {"folder"};
+        } else {
+            newDocName = docName;
+            theAvailableTypes = new String[] {};
+        }
+
+        Map<String, Object> r = new HashMap<>();
+        r.put("docName", newDocName);
+        r.put("availableTypes", Arrays.asList(theAvailableTypes));
+        return r;
+    }
+
+
+    private String findExportLink(String name, File entry) {
+        String exportLink;
+        String lastLink = "";
+        for (Map.Entry<String, String> elink:  entry.getExportLinks().entrySet()) {
+            log.info("Checking link: " + elink);
+            lastLink = elink.getValue();
+            int index = lastLink.indexOf("exportFormat=") + 13;
+            String extension = lastLink.substring(index);
+            if (name.endsWith("." + extension)) {
+                return lastLink;
+            }
+        }
+        int index = lastLink.indexOf("exportFormat=") + 13;
+        exportLink = lastLink.substring(0, index);
+        if (name.endsWith(".xls")) {
+            exportLink += "xlsx";
+        } else {
+            exportLink += name.substring(name.lastIndexOf(".") + 1);
+        }
+        return exportLink;
+    }
+
+    /**
+     * Saves the attachment stored in XWiki to the Google drive of the user attached to the current logged-in user.
+     * @param page the XWiki page name
+     * @param name the attachment name
+     * @return a record with the keys fileName, exportLink, version, editLink,  embedLink,
+     *      and google-user's email-address
+     * @throws XWikiException if something went wrong at the XWiki side
+     * @throws IOException if something went wrong int he communication with Google drive.
+     */
+    public Map<String, Object> saveAttachmentToGoogle(String page, String name) throws XWikiException, IOException {
+        log.info("Starting saving attachment ${name} from page ${page}");
+        XWikiContext context = xwikiContextProvider.get();
+        XWikiDocument adoc = getXWiki().getDocument(documentResolver.resolve(page), context);
+        XWikiAttachment attach = adoc.getAttachment(name);
+        String ctype = attach.getMimeType();
+
+        File file = new com.google.api.services.drive.model.File();
+        file.setTitle(name);
+        file.setOriginalFilename(name);
+        InputStreamContent content = new InputStreamContent(ctype, attach.getContentInputStream(context));
+        Drive drive = getDriveService();
+        String user = drive.about().get().execute().getUser().getEmailAddress();
+        Drive.Files.Insert insert = drive.files().insert(file, content);
+        insert.setConvert(true);
+        File docData = insert.execute();
+        if (docData != null) {
+            log.info("File inserted " + docData);
+            String embedLink = docData.getEmbedLink();
+            if (embedLink == null) {
+                embedLink = docData.getAlternateLink();
+            }
+
+            BaseObject object = adoc.newXObject(getSyncDocClassReference(), context);
+            Map<String, Object> r = new HashMap<>();
+            object.set("id", docData.getId(), context);
+            r.put("id", docData.getId());
+            object.set("fileName", name, context);
+            object.set("exportLink", findExportLink(name, docData), context);
+            r.put("exportLink", findExportLink(name, docData));
+            object.set("version", Long.toString(docData.getVersion()), context);
+            object.set("editLink", docData.getAlternateLink(), context);
+            r.put("editLink", docData.getAlternateLink());
+            object.set("embedLink", embedLink, context);
+            object.set("user", user, context);
+
+            getXWiki().saveDocument(adoc, "Updated Google Apps Document metadata", context);
+            return r;
+
+        } else {
+            log.info("File insert failed");
+            return null;
+        }
+    }
+
+    /**
+     * reads the google user-info attached to the current user.
+     * @return the google user-info with keys displayName, emails (array of type,value pairs),
+     *    etag, id, image (map with keys isDefault and url), kind, language,
+     *    name (map with keys familyName and givenName).
+     */
+    public Map<String, Object> getGoogleUser() {
+        // e.g.: User: [displayName: name name,
+        // emails:[[type:account, value:xxx@googlemail.com]],
+        // etag:"k-5ZH5-al;sdsdkl;-sdsadsd",
+        // id:948382,
+        // image:[isDefault:false, url:https://222.googleusercontent.com/-2323/s50/photo.jpg],
+        // kind:plus#person, language:uu,
+        // name:[familyName:XXX, givenName:xxx]]
+        return (Map<String, Object>) (xwikiContextProvider.get().getRequest().getAttribute("googleUser"));
+    }
 
 }
