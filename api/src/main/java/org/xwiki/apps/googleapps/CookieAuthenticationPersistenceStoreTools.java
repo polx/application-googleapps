@@ -33,6 +33,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.xwiki.stability.Unstable;
 
 import com.xpn.xwiki.XWikiContext;
 import com.xpn.xwiki.XWikiException;
@@ -43,7 +44,7 @@ import com.xpn.xwiki.web.XWikiRequest;
  *   /xwiki-authenticator-trusted-api/src/main/java/org/xwiki/contrib/authentication\
  *   /internal/CookieAuthenticationPersistenceStore.java.
  * @version $Id$
- * @since 2.4
+ * @since 2.5-RC1
  */
 public class CookieAuthenticationPersistenceStoreTools
 {
@@ -88,6 +89,7 @@ public class CookieAuthenticationPersistenceStoreTools
      * @param cookieMaxAge Time To Live of the created cookies in scd
      * @throws XWikiException in case of trouble
      */
+    @Unstable
     public void initialize(XWikiContext context, long cookieMaxAge) throws XWikiException
     {
         this.context = context;
@@ -121,6 +123,7 @@ public class CookieAuthenticationPersistenceStoreTools
      * @param context where we pull things from.
      * @throws XWikiException in case of a trouble at starting.
      */
+    @Unstable
     public void initialize(XWikiContext context) throws XWikiException
     {
         this.initialize(context, COOKIE_TTL);
@@ -129,6 +132,7 @@ public class CookieAuthenticationPersistenceStoreTools
     /**
      * Erases the information stored.
      */
+    @Unstable
     public void clear()
     {
         // context.getResponse().removeCookie(cookiePfx + AUTHENTICATION_COOKIE, context.getRequest());
@@ -140,6 +144,7 @@ public class CookieAuthenticationPersistenceStoreTools
      * Store the user-information within the cookie.
      * @param userUid the user-name (without xwiki. prefix)
      */
+    @Unstable
     public void store(String userUid)
     {
         Cookie cookie = new Cookie(cookiePfx + AUTHENTICATION_COOKIE, encryptText(userUid));
@@ -160,6 +165,7 @@ public class CookieAuthenticationPersistenceStoreTools
      *
      * @return the login name found, or null.
      */
+    @Unstable
     public String retrieve()
     {
         logger.info("retrieve cookie " + cookiePfx + AUTHENTICATION_COOKIE);

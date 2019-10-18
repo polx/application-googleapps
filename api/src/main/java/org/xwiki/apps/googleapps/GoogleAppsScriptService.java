@@ -70,6 +70,7 @@ import javax.inject.Named;
 import javax.inject.Provider;
 import javax.inject.Singleton;
 import javax.inject.Inject;
+import javax.print.Doc;
 import javax.servlet.http.HttpSession;
 
 import org.slf4j.Logger;
@@ -78,6 +79,7 @@ import org.xwiki.query.Query;
 import org.xwiki.query.QueryException;
 import org.xwiki.query.QueryManager;
 import org.xwiki.script.service.ScriptService;
+import org.xwiki.stability.Unstable;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -96,6 +98,7 @@ import java.util.jar.Manifest;
 /**
  * Set of methods accessible to the scripts using the GoogleApps functions.
  * @version $Id$
+ * @since 2.5-RC1
  */
 @Component
 @Named("GAScriptService")
@@ -164,7 +167,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     @Override
     public void onEvent(Event event, Object source, Object data)
     {
-        log.info("Event triggered: " + event);
+        log.info("Event triggered: " + event + " with source " + source);
         if (event instanceof ApplicationReadyEvent) {
             try {
                 initialize();
@@ -172,7 +175,12 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
                 e.printStackTrace();
             }
         } else if (event instanceof DocumentUpdatedEvent) {
-            configActiveFlag = null;
+            XWikiDocument document = (XWikiDocument) source;
+            configDocRef = getConfigDocRef();
+            if(document!=null && document.getDocumentReference().compareTo(configDocRef)==0) {
+                log.info("Reloading config.");
+                readConfigDoc(xwikiContextProvider.get());
+            }
         }
     }
 
@@ -197,11 +205,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
 
     private BaseObject getConfigDoc(XWikiContext context) throws XWikiException
     {
-        if (configDocRef  ==  null) {
-            configDocRef = new DocumentReference(context.getWikiId(),
-                    "GoogleApps", "GoogleAppsConfig");
-            configObjRef = new ObjectReference("GoogleApps.GoogleAppsConfigClass", configDocRef);
-        }
+        configDocRef = getConfigDocRef();
         XWikiDocument doc = context.getWiki().getDocument(configObjRef, context);
         BaseObject result = doc.getXObject(configObjRef, false, context);
         if (result  ==  null) {
@@ -226,6 +230,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @return if the application is licensed and activated
      * @throws XWikiException in case a context cannot be read from thread.
      */
+    @Unstable
     public boolean isActive() throws XWikiException {
         return isActive(xwikiContextProvider.get());
     }
@@ -236,12 +241,13 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      *
      * @param context The context (a page request).
      * @return True if documents were readable, and the is licensed and active; false otherwise. */
+    @Unstable
     public boolean isActive(XWikiContext context)
     {
-        if (configActiveFlag  ==  null) {
+        if (configActiveFlag == null) {
             readConfigDoc(context);
         }
-        if (configActiveFlag  !=  null) {
+        if (configActiveFlag != null) {
             return configActiveFlag;
         }
         return false;
@@ -293,6 +299,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * Reads the manifest to find when the JAR file was assembled by maven.
      * @return the build date.
      */
+    @Unstable
     public Date getBuildTime() {
         try {
             Class clazz = getClass();
@@ -358,6 +365,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      *
      * @return if the app is configured to use the Google Drive integration (default: yes).
      */
+    @Unstable
     public boolean isUseDrive() {
         return configScopeUseDrive;
     }
@@ -411,6 +419,15 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
             gauthClassRef = new DocumentReference("xwiki", "GoogleApps", "SynchronizedDocumentClass");
         }
         return gauthClassRef;
+    }
+
+    private DocumentReference getConfigDocRef() {
+        if(configDocRef == null) {
+            configDocRef = new DocumentReference("xwiki",
+                    "GoogleApps", "GoogleAppsConfig");
+            configObjRef = new ObjectReference("GoogleApps.GoogleAppsConfigClass", configDocRef);
+        }
+        return configDocRef;
     }
 
     /**
@@ -617,6 +634,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @throws XWikiException if the interaction with xwiki failed
      * @throws IOException if a communication problem to Google services occured
      */
+    @Unstable
     public Credential authorize() throws XWikiException, IOException {
         return authorize(true);
     }
@@ -628,6 +646,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @throws XWikiException if the interaction with xwiki failed
      * @throws IOException if a communication problem to Google services occured
      */
+    @Unstable
     public Credential authorize(boolean redirect) throws XWikiException, IOException {
         log.info("In authorize");
         // useless? GoogleAuthorizationCodeFlow flow = getFlow();
@@ -652,6 +671,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @return "failed login" if failed, "no user" (can be attempted to Google-OAuth),
      *          or "ok" if successful
      */
+    @Unstable
     public String updateUser() {
         try {
             if (!isActive()) {
@@ -882,34 +902,33 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     }
 
 
-    private FileList getDocumentList() throws XWikiException, IOException {
+    @Unstable
+    public List<File> getDocumentList() throws XWikiException, IOException {
         Drive drive = getDriveService();
         FileList result = drive.files().list().setMaxResults(10).execute();
-        // TODO: filter the list for inapplicable types
-        return result;
+        return result.getItems();
     }
 
-    // TODO: this is the same function as listDocuments! One of them must be wrong
     /** Fetches a list of Google Drive document matching a substring query in the filename.
      *
-     * @param query the expected filename substring
+     * @param query the expected query (e.g. fullText contains winter ski)
      * @param nbResults max number of results
      * @return The list of files at Google Drive.
      * @throws XWikiException if an XWiki issue occurs
      * @throws IOException if an error interacting with Google services occurred
      */
-    public FileList importFromGoogleApps(String query, int nbResults) throws XWikiException, IOException {
+    @Unstable
+    public List<File> listDriveDocumentsWithTypes(String query, int nbResults) throws XWikiException, IOException {
         Drive drive = getDriveService();
         Drive.Files.List req = drive.files().list()
                 .setQ(query)
                 .setFields("items(id,mimeType,title,exportLinks,selfLink,version,alternateLink)")
                 .setMaxResults(nbResults);
         FileList result = req.execute();
-        // TODO: filter the list for inapplicable types
-        return result;
+        return result.getItems();
     }
 
-    /** Fetches a list of Google Drive document matching a substring query in the filename.
+    /** Fetches a list of Google Drive document matching a given query.
      *
      * @param query the expected filename substring
      * @param nbResults max number of results
@@ -917,11 +936,11 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @throws XWikiException if an XWiki issue occurs
      * @throws IOException if an error interacting with Google services occurred
      */
+    @Unstable
     public FileList listDocuments(String query, int nbResults) throws XWikiException, IOException {
         Drive drive = getDriveService();
         Drive.Files.List req = drive.files().list().setQ(query).setMaxResults(nbResults);
         FileList result = req.execute();
-        // TODO: filter the list for inapplicable types
         return result;
     }
 
@@ -935,6 +954,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @throws XWikiException if an issue occurred in XWiki
      * @throws IOException if an issue occurred in the communication with teh Google services
      */
+    @Unstable
     public boolean retrieveFileFromGoogle(String page, String name, String id, String url)
             throws XWikiException, IOException  {
         return retrieveFileFromGoogle(getDocsService(), getDriveService(), page, name, id, url);
@@ -1035,6 +1055,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @return information about the corresponding Google Drive document
      * @throws XWikiException if something happened at XWiki side
      */
+    @Unstable
     public GoogleDocMetadata getGoogleDocument(String pageName, String fileName) throws XWikiException {
         XWikiDocument adoc = getXWiki().getDocument(documentResolver.resolve(pageName), xwikiContextProvider.get());
         BaseObject object = adoc.getXObject(getSyncDocClassReference(), "fileName", fileName, false);
@@ -1052,6 +1073,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
     /**
      * Simple record for metadata about a google doc.
      */
+    @Unstable
     public static class GoogleDocMetadata
     {
         /**
@@ -1076,6 +1098,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @param elink the link where to read the extension name
      * @return an array with extension and simplified document name
      */
+    @Unstable
     public String[] getExportLink(String docName, String elink) {
         int index = elink.indexOf("exportFormat=") + 13;
         String extension = elink.substring(index);
@@ -1094,6 +1117,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @param docName the name of the document
      * @return a map with docName and availableTypes as keys
      */
+    @Unstable
     public Map<String, Object> getFileDisplayInfo(String mimeType, String docName) {
         String newDocName;
         String[] theAvailableTypes;
@@ -1162,6 +1186,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      * @throws XWikiException if something went wrong at the XWiki side
      * @throws IOException if something went wrong int he communication with Google drive.
      */
+    @Unstable
     public Map<String, Object> saveAttachmentToGoogle(String page, String name) throws XWikiException, IOException {
         log.info("Starting saving attachment ${name} from page ${page}");
         XWikiContext context = xwikiContextProvider.get();
@@ -1213,6 +1238,7 @@ public class GoogleAppsScriptService implements ScriptService, EventListener, In
      *    etag, id, image (map with keys isDefault and url), kind, language,
      *    name (map with keys familyName and givenName).
      */
+    @Unstable
     public Map<String, Object> getGoogleUser() {
         // e.g.: User: [displayName: name name,
         // emails:[[type:account, value:xxx@googlemail.com]],

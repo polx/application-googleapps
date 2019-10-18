@@ -47,7 +47,7 @@ import org.xwiki.text.StringUtils;
 /**
  * An authenticator that can include a negotiation with the Google Cloud (e.g. Google Drive) services.
  * This authenticator is created, configured and maintained by the GoogleAppsScriptService.
- * @since 2.5
+ * @since 2.5-RC1
  * @version $Id$
  */
 public class GoogleAppsAuthService extends XWikiAuthServiceImpl
