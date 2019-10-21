@@ -44,18 +44,18 @@
     </dependency>
     <dependency>
       <groupId>com.google.gdata</groupId>
-    	<artifactId>core</artifactId>
-    	<version>1.47.1</version>
+      <artifactId>core</artifactId>
+      <version>1.47.1</version>
     </dependency>
     <dependency>
       <groupId>com.google.apis</groupId>
       <artifactId>google-api-services-plus</artifactId>
-      <version>v1-rev318-1.20.0</version>
+      <version>v1-rev585-1.23.0</version>
     </dependency>
     <dependency>
-    	<groupId>com.google.apis</groupId>
-    	<artifactId>google-api-services-drive</artifactId>
-    	<version>v2-rev174-1.20.0</version>
+      <groupId>com.google.apis</groupId>
+      <artifactId>google-api-services-drive</artifactId>
+      <version>v2-rev358-1.23.0</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
